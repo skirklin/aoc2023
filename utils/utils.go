@@ -2,15 +2,17 @@ package utils
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 )
 
-// User session id is a github session id (plucked from cookies in browser)
-type User struct {
+// session id is a github session id (plucked from cookies in browser)
+type Session struct {
 	SessionID string
+	GID       string
 }
 
 func panicIf(err error) {
@@ -28,17 +30,25 @@ func AsInt(m string) int {
 }
 
 // FetchInputs gets the input data for a given year and day
-func (user User) FetchInputs(year, day int) string {
+func (session Session) FetchInputs(year, day int) []byte {
 	fmt.Println("reading from web")
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://adventofcode.com/%d/day/%d/input", year, day), nil)
+	fmt.Println("session =", session.SessionID)
+	fmt.Println("gid =", session.GID)
 	panicIf(err)
 	// ...
 	req.AddCookie(
 		&http.Cookie{
 			Name:  "session",
-			Value: user.SessionID,
+			Value: session.SessionID,
+		},
+	)
+	req.AddCookie(
+		&http.Cookie{
+			Name:  "_gid",
+			Value: session.GID,
 		},
 	)
 	resp, err := client.Do(req)
@@ -49,9 +59,28 @@ func (user User) FetchInputs(year, day int) string {
 	}
 
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	panicIf(err)
-	return string(data)
+	return data
+}
+
+func GetInputs(year int, day int) string {
+	localRoot := "/tmp/aoc/"
+	localCopy := fmt.Sprintf("%s/%d/%d", localRoot, year, day)
+
+	fh, err := os.Open(localCopy)
+	if err != nil {
+		session := Session{SessionID: os.Getenv("AOC_SESSION_ID"), GID: os.Getenv("AOC_GID")}
+		response := session.FetchInputs(year, day)
+		err := os.MkdirAll(fmt.Sprintf("%s/%d", localRoot, year), 0750)
+		panicIf(err)
+		os.WriteFile(localCopy, response, 0750)
+		return string(response)
+	} else {
+		bytes, err := io.ReadAll(fh)
+		panicIf(err)
+		return string(bytes)
+	}
 }
 
 func Subslice(arr []interface{}, i int) []interface{} {
@@ -59,51 +88,6 @@ func Subslice(arr []interface{}, i int) []interface{} {
 	ret = append(ret, arr[:i]...)
 	ret = append(ret, arr[i+1:]...)
 	return ret
-}
-
-func permute(base []interface{}, values []interface{}, c chan<- []interface{}) {
-	if len(values) == 0 {
-		c <- append(make([]interface{}, 0), base...)
-	} else {
-		for i := range values {
-			base = append(base, values[i])
-			permute(base, Subslice(values, i), c)
-			base = base[:len(base)-1]
-		}
-
-	}
-	if len(base) == 0 {
-		close(c)
-	}
-}
-
-func Permutations(arr []interface{}) <-chan []interface{} {
-	c := make(chan []interface{})
-
-	go permute(make([]interface{}, 0), arr, c)
-
-	return c
-}
-
-func combine(base []int, values []int, c chan<- []int, first bool) {
-	if len(values) == 0 {
-		c <- append(make([]int, 0), base...)
-	} else {
-		combine(base, values[1:], c, false)
-		base = append(base, values[0])
-		combine(base, values[1:], c, false)
-	}
-	if first {
-		close(c)
-	}
-}
-
-func Combinations(arr []int) <-chan []int {
-	c := make(chan []int)
-
-	go combine(make([]int, 0), arr, c, true)
-
-	return c
 }
 
 func AsInterfaceSlice(s []string) []interface{} {

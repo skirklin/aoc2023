@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/skirklin/aoc2023/utils"
 )
@@ -47,6 +46,5 @@ func check(e error) {
 }
 
 func main() {
-	user := utils.User{SessionID: os.Getenv("AOC_SESSION_ID")}
-	data := user.FetchInputs(2015, 23)
+	utils.GetInputs(2023, 1)
 }
