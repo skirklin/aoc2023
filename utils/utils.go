@@ -31,7 +31,6 @@ func AsInt(m string) int {
 
 // FetchInputs gets the input data for a given year and day
 func (session Session) FetchInputs(year, day int) []byte {
-	fmt.Println("reading from web")
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://adventofcode.com/%d/day/%d/input", year, day), nil)
@@ -70,37 +69,18 @@ func GetInputs(year int, day int) string {
 
 	fh, err := os.Open(localCopy)
 	if err != nil {
+		fmt.Println("fetching from web")
 		session := Session{SessionID: os.Getenv("AOC_SESSION_ID"), GID: os.Getenv("AOC_GID")}
 		response := session.FetchInputs(year, day)
 		err := os.MkdirAll(fmt.Sprintf("%s/%d", localRoot, year), 0750)
 		panicIf(err)
+		fmt.Println("caching result")
 		os.WriteFile(localCopy, response, 0750)
 		return string(response)
 	} else {
+		fmt.Println("reading from cache")
 		bytes, err := io.ReadAll(fh)
 		panicIf(err)
 		return string(bytes)
 	}
-}
-
-func Subslice(arr []interface{}, i int) []interface{} {
-	ret := make([]interface{}, 0)
-	ret = append(ret, arr[:i]...)
-	ret = append(ret, arr[i+1:]...)
-	return ret
-}
-
-func AsInterfaceSlice(s []string) []interface{} {
-	o := make([]interface{}, len(s), len(s))
-	for i := range s {
-		o[i] = s[i]
-	}
-	return o
-}
-func AsStringSlice(s []interface{}) []string {
-	o := make([]string, len(s), len(s))
-	for i := range s {
-		o[i] = s[i].(string)
-	}
-	return o
 }
