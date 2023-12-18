@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,31 +68,37 @@ type Range struct {
 	End   int64
 }
 
-type RangePair struct {
+type Segment struct {
 	source Range
-	dest   int64
+	dest   Range
 }
 
-type RangeMap struct {
-	ranges []RangePair
+type LinearPiecewise struct {
+	ranges []Segment
 }
 
 func (r *Range) contains(n int64) bool {
-	return n >= r.Start && n <= r.End
+	return n >= r.Start && n < r.End
 }
 
-func (r1 *Range) overlaps(r2 Range) bool {
-	return (r2.Start <= r1.Start && r1.Start <= r2.End) ||
-		(r2.Start <= r1.End && r1.End <= r2.End)
+func (s *Segment) apply(n int64) (result int64) {
+	if !(s.source.contains(n) || s.source.End == n) {
+		panic("out of valid range")
+	}
+	return s.dest.Start + n - s.source.Start
 }
 
-func (rmap *RangeMap) apply(n int64) (result int64) {
+func (s *Segment) unapply(x int64) (result int64) {
+	return x - s.dest.Start + s.source.Start
+}
+
+func (rmap *LinearPiecewise) apply(n int64) (result int64) {
 	result = n
 	hits := 0
-	for _, pair := range rmap.ranges {
-		if pair.source.contains(n) {
+	for _, segment := range rmap.ranges {
+		if segment.source.contains(n) {
 			hits = 1
-			result = pair.dest + n - pair.source.Start
+			result = segment.apply(n)
 		}
 	}
 	if hits > 1 {
@@ -100,49 +107,90 @@ func (rmap *RangeMap) apply(n int64) (result int64) {
 	return result
 }
 
-func (rmap *RangeMap) applyOn(r1 Range) []Range {
-	fmt.Println("applying map:", rmap.ranges)
-	// all inputs in r1 must be covered by the return, defaulting to their existing value
-	for _, r2 := range rmap.ranges {
-		if r1.overlaps(r2.source) {
-			fmt.Println("r1:", r1, "r2", r2)
-			newStart := max(r1.Start, r2.source.Start)
-			newEnd := min(r1.End, r2.source.End)
-			shift := r2.dest - r2.source.Start
-			result := []Range{}
-
-			if newStart > r1.Start {
-				result = append(result, Range{r1.Start, newStart})
-			}
-			result = append(result, Range{Start: newStart + shift, End: newEnd + shift})
-			if newEnd < r1.End {
-				result = append(result, Range{newEnd, r1.End})
-			}
-			fmt.Println("mapped newStart:", newStart, "newend:", newEnd, "shift:", shift)
-			fmt.Println("after mapping:", result)
-			sort.Slice(result, func(i, j int) bool {
-				return result[i].Start < result[j].Start
-			})
-			return result
-		}
-	}
-	return []Range{r1}
+func sortRanges(ranges []Segment) {
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].source.Start < ranges[j].source.Start
+	})
 }
 
-func parseBlock(input string) (result RangeMap) {
-	ranges := []RangePair{}
+func (r1 Range) overlaps(r2 Range) bool {
+	//  r1 |-----|
+	//  r2    |------|
+	overlapStart := max(r1.Start, r2.Start)
+	overlapEnd := min(r1.End, r2.End)
+	return overlapStart < overlapEnd
+}
+
+func (p1 LinearPiecewise) compose(p2 LinearPiecewise) LinearPiecewise {
+	ranges := []Segment{}
+	for _, pwi := range p1.ranges {
+		for _, pwj := range p2.ranges {
+			if pwi.dest.overlaps(pwj.source) {
+				// in the "j" basis
+				overlapStart := max(pwi.dest.Start, pwj.source.Start)
+				overlapEnd := min(pwi.dest.End, pwj.source.End)
+
+				// convert to the "i" basis
+				x := Range{pwi.unapply(overlapStart), pwi.unapply(overlapEnd)}
+				ranges = append(ranges, Segment{x, Range{pwj.apply(overlapStart), pwj.apply(overlapEnd)}})
+			}
+		}
+	}
+
+	span := int64(0)
+	for _, seg := range ranges {
+		span += seg.source.End - seg.source.Start
+	}
+	if span != math.MaxInt64 {
+		fmt.Println(ranges)
+		panic(fmt.Sprintf("function doesn't cover all of int64. %d != %d (diff = %d)", span, math.MaxInt64, math.MaxInt64-span))
+	}
+	return LinearPiecewise{ranges}
+}
+
+func parseBlock(input string) (result LinearPiecewise) {
+	ranges := []Segment{}
 	for _, line := range strings.Split(strings.Trim(input, "\n"), "\n")[1:] {
 		parts := stringsToInts(strings.Fields(line))
-		fmt.Println(parts)
 		if len(parts) != 3 {
 			panic(fmt.Sprintf("invalid line: %s", line))
 		}
 
-		r := Range{Start: parts[1], End: parts[1] + parts[2] - 1}
-		rangePair := RangePair{r, parts[0]}
-		ranges = append(ranges, rangePair)
+		source := Range{Start: parts[1], End: parts[1] + parts[2]}
+		dest := Range{Start: parts[0], End: parts[0] + parts[2]}
+		segment := Segment{source, dest}
+		ranges = append(ranges, segment)
 	}
-	result = RangeMap{ranges}
+	sortRanges(ranges)
+
+	fillers := []Segment{}
+
+	if ranges[0].source.Start > 0 {
+		r := Range{int64(0), ranges[0].source.Start}
+		fillers = append(fillers, Segment{r, r})
+	}
+
+	for i := range ranges[:len(ranges)-1] {
+		r := Range{ranges[i].source.End, ranges[i+1].source.Start}
+		if r.Start > r.End {
+			fmt.Println(r)
+			panic("invalid overlap")
+		}
+		if r.End-r.Start > 0 {
+			// insert a segment to represent the multiplication with unity
+			fillers = append(fillers, Segment{r, r})
+		}
+	}
+	ranges = append(ranges, fillers...)
+
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].source.Start < ranges[j].source.Start
+	})
+
+	last := Range{ranges[len(ranges)-1].source.End, math.MaxInt64}
+	ranges = append(ranges, Segment{last, last})
+
+	result = LinearPiecewise{ranges}
 	return result
 }
 
@@ -150,13 +198,11 @@ func part1(input string) (result int64) {
 	chunks := strings.Split(input, "\n\n")
 	seeds := stringsToInts(strings.Fields(strings.Split(chunks[0], ":")[1]))
 	curr := seeds
-	fmt.Println(curr)
 	for _, chunk := range chunks[1:] {
 		parsed := parseBlock(chunk)
 		for i, val := range curr {
 			curr[i] = parsed.apply(val)
 		}
-		fmt.Println(curr)
 	}
 	result = curr[0]
 	for _, val := range curr {
@@ -171,43 +217,40 @@ func part2(input string) (result int64) {
 	chunks := strings.Split(input, "\n\n")
 	// make ranges instead of a single array
 	seeds := stringsToInts(strings.Fields(strings.Split(chunks[0], ":")[1]))
-	fmt.Println(seeds)
-	curr := []Range{}
-	initialSeeds := int64(0)
+	inputRanges := []Range{}
 	for i := 0; i < len(seeds)-1; i = i + 2 {
 		r := Range{seeds[i], seeds[i] + seeds[i+1]}
-		initialSeeds += r.End - r.Start
-		curr = append(curr, r)
+		inputRanges = append(inputRanges, r)
 	}
-	// fmt.Println("initial seeds:", initialSeeds)
+	unit := Segment{Range{int64(0), math.MaxInt64}, Range{int64(0), math.MaxInt64}}
+	mapping := LinearPiecewise{[]Segment{unit}}
 
-	fmt.Println(curr)
 	for _, chunk := range chunks[1:] {
-		tmp := []Range{}
-		parsed := parseBlock(chunk)
-		for _, val := range curr {
-			tmp = append(tmp, parsed.applyOn(val)...)
-		}
-		curr = tmp
-		sort.Slice(curr, func(i, j int) bool {
-			return curr[i].Start < curr[j].Start
-		})
-		numSeeds := int64(0)
-		for _, val := range curr {
-			numSeeds += val.End - val.Start
-		}
-		// fmt.Println("number of seeds:", numSeeds)
-		fmt.Println(curr)
+		pwfunc := parseBlock(chunk)
+		mapping = mapping.compose(pwfunc)
 	}
-	span := int64(0)
-	result = curr[0].Start
-	for _, val := range curr {
-		span += val.End - val.Start
-		if val.Start < result {
-			result = val.Start
+
+	bestX := inputRanges[0].Start
+	bestY := mapping.apply(bestX)
+	check := func(n int64) {
+		// fmt.Printf("checking %d -> %d (curr best %d)\n", n, mapping.apply(n), bestY)
+		if val := mapping.apply(n); val < bestY {
+			bestX = n
+			bestY = val
 		}
 	}
-	// fmt.Println("number of seeds:", span)
+	for _, inRange := range inputRanges {
+		check(inRange.Start)
+	}
+	for _, segment := range mapping.ranges {
+		for _, inRange := range inputRanges {
+			if inRange.contains(segment.source.Start) {
+				check(segment.source.Start)
+			}
+		}
+	}
+	result = bestY
+
 	return result
 }
 
