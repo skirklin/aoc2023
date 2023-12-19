@@ -33,6 +33,9 @@ func AsInt(m string) int {
 func (session Session) FetchInputs(year, day int) []byte {
 	client := &http.Client{}
 
+	if day <= 0 {
+		panic("invalid day, must be > 0. Make sure you updated the template.")
+	}
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://adventofcode.com/%d/day/%d/input", year, day), nil)
 	fmt.Println("session =", session.SessionID)
 	fmt.Println("gid =", session.GID)
